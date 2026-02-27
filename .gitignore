@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# FFmpeg sidecar binaries (downloaded per-platform, ~87MB each)
+# Use scripts/download-ffmpeg.sh or scripts/download-ffmpeg.ps1 to fetch them
+src-tauri/binaries/ffmpeg-*
+src-tauri/binaries/ffprobe-*
+
+# TypeScript build info
+tsconfig.tsbuildinfo
+
+# Bun
+bun.lock
+
+# Python
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Recovery output
+recovered/

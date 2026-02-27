@@ -1,0 +1,223 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="50%" stop-color="#0c1222"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+
+    <!-- Wing outer: deep crimson -->
+    <linearGradient id="wingOuter" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#7f1d1d"/>
+      <stop offset="40%" stop-color="#9f1239"/>
+      <stop offset="100%" stop-color="#be123c"/>
+    </linearGradient>
+
+    <!-- Wing mid: crimson to orange -->
+    <linearGradient id="wingMid" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#be123c"/>
+      <stop offset="50%" stop-color="#e11d48"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+
+    <!-- Wing inner: orange to amber -->
+    <linearGradient id="wingInner" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="50%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+
+    <!-- Wing highlights -->
+    <linearGradient id="wingHighlight" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="50%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#fef08a"/>
+    </linearGradient>
+
+    <!-- Body gradient: hot core -->
+    <linearGradient id="body" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#be123c"/>
+      <stop offset="25%" stop-color="#ea580c"/>
+      <stop offset="50%" stop-color="#f97316"/>
+      <stop offset="75%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#fef9c3"/>
+    </linearGradient>
+
+    <!-- Body core glow -->
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fef9c3"/>
+      <stop offset="40%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </radialGradient>
+
+    <!-- Head/beak -->
+    <linearGradient id="headGrad" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="60%" stop-color="#fef08a"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+
+    <!-- Tail flames -->
+    <linearGradient id="tailFlame" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#e11d48"/>
+      <stop offset="40%" stop-color="#be123c"/>
+      <stop offset="100%" stop-color="#7f1d1d" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Tail inner flame -->
+    <linearGradient id="tailInner" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="50%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#be123c" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Ember glow -->
+    <radialGradient id="emberGlow" cx="50%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#f97316" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Background atmosphere -->
+    <radialGradient id="atmosphere" cx="50%" cy="55%" r="45%">
+      <stop offset="0%" stop-color="#e11d48" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#9f1239" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Soft glow filter -->
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="glow"/>
+      <feComposite in="SourceGraphic" in2="glow" operator="over"/>
+    </filter>
+
+    <!-- Core brightness filter -->
+    <filter id="brighten" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Large ambient glow -->
+    <filter id="ambientGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="25"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Atmospheric radial light -->
+  <rect width="512" height="512" rx="112" fill="url(#atmosphere)"/>
+
+  <!-- Ambient glow behind phoenix -->
+  <ellipse cx="256" cy="270" rx="120" ry="150" fill="#f97316" opacity="0.08" filter="url(#ambientGlow)"/>
+
+  <!-- ==================== PHOENIX ==================== -->
+  <g transform="translate(256, 250)">
+
+    <!-- === TAIL FLAMES === -->
+    <!-- Outer tail wisps -->
+    <path d="M-30 120 C-50 180,-70 230,-55 280 C-45 260,-35 220,-25 180 C-20 200,-30 240,-20 270 C-10 240,0 200,0 160 Z" fill="url(#tailFlame)" opacity="0.7"/>
+    <path d="M30 120 C50 180,70 230,55 280 C45 260,35 220,25 180 C20 200,30 240,20 270 C10 240,0 200,0 160 Z" fill="url(#tailFlame)" opacity="0.7"/>
+
+    <!-- Inner tail flames -->
+    <path d="M-15 110 C-25 160,-35 200,-25 240 C-18 210,-10 170,-8 140 C-5 170,-15 210,-5 235 C5 200,5 160,0 120 Z" fill="url(#tailInner)" opacity="0.8"/>
+    <path d="M15 110 C25 160,35 200,25 240 C18 210,10 170,8 140 C5 170,15 210,5 235 C-5 200,-5 160,0 120 Z" fill="url(#tailInner)" opacity="0.8"/>
+
+    <!-- Central tail core -->
+    <path d="M0 100 C-8 140,-12 180,-5 210 C0 185,0 160,0 140 C0 160,0 185,5 210 C12 180,8 140,0 100 Z" fill="#f97316" opacity="0.6"/>
+
+    <!-- === BACK WINGS (outermost, darkest) === -->
+    <!-- Left back wing -->
+    <path d="M-20 40 C-60 60,-130 40,-190 -20 C-200 -32,-195 -55,-175 -75 C-170 -45,-145 -10,-100 10 C-70 25,-40 20,-15 5 Z" fill="url(#wingOuter)"/>
+    <!-- Right back wing -->
+    <path d="M20 40 C60 60,130 40,190 -20 C200 -32,195 -55,175 -75 C170 -45,145 -10,100 10 C70 25,40 20,15 5 Z" fill="url(#wingOuter)"/>
+
+    <!-- === MIDDLE WINGS === -->
+    <!-- Left mid wing -->
+    <path d="M-15 20 C-50 35,-110 15,-165 -50 C-172 -62,-165 -80,-148 -95 C-145 -68,-125 -35,-85 -15 C-55 -2,-30 0,-10 -10 Z" fill="url(#wingMid)"/>
+    <!-- Right mid wing -->
+    <path d="M15 20 C50 35,110 15,165 -50 C172 -62,165 -80,148 -95 C145 -68,125 -35,85 -15 C55 -2,30 0,10 -10 Z" fill="url(#wingMid)"/>
+
+    <!-- === INNER WINGS (brightest) === -->
+    <!-- Left inner wing -->
+    <path d="M-10 0 C-40 10,-85 -10,-130 -65 C-135 -75,-130 -88,-118 -98 C-116 -78,-100 -50,-70 -35 C-45 -22,-25 -18,-8 -20 Z" fill="url(#wingInner)"/>
+    <!-- Right inner wing -->
+    <path d="M10 0 C40 10,85 -10,130 -65 C135 -75,130 -88,118 -98 C116 -78,100 -50,70 -35 C45 -22,25 -18,8 -20 Z" fill="url(#wingInner)"/>
+
+    <!-- === WING TIP HIGHLIGHTS === -->
+    <!-- Left wing tip accent -->
+    <path d="M-148 -95 C-155 -105,-150 -118,-138 -125 C-135 -110,-130 -98,-118 -98 C-125 -92,-140 -88,-148 -95 Z" fill="url(#wingHighlight)" opacity="0.8"/>
+    <!-- Right wing tip accent -->
+    <path d="M148 -95 C155 -105,150 -118,138 -125 C135 -110,130 -98,118 -98 C125 -92,140 -88,148 -95 Z" fill="url(#wingHighlight)" opacity="0.8"/>
+
+    <!-- Left upper wing feather -->
+    <path d="M-175 -75 C-185 -90,-178 -110,-162 -120 C-160 -100,-150 -85,-135 -80 C-148 -72,-165 -68,-175 -75 Z" fill="url(#wingHighlight)" opacity="0.5"/>
+    <!-- Right upper wing feather -->
+    <path d="M175 -75 C185 -90,178 -110,162 -120 C160 -100,150 -85,135 -80 C148 -72,165 -68,175 -75 Z" fill="url(#wingHighlight)" opacity="0.5"/>
+
+    <!-- === BODY === -->
+    <!-- Body outer glow -->
+    <ellipse cx="0" cy="-10" rx="22" ry="70" fill="url(#body)" filter="url(#softGlow)" opacity="0.4"/>
+
+    <!-- Main body -->
+    <path d="M0 100 C-18 80,-25 40,-25 0 C-25 -40,-22 -70,-15 -95 C-8 -115,0 -120,0 -125 C0 -120,8 -115,15 -95 C22 -70,25 -40,25 0 C25 40,18 80,0 100 Z" fill="url(#body)"/>
+
+    <!-- Body core highlight -->
+    <path d="M0 60 C-10 45,-14 15,-14 -15 C-14 -45,-10 -70,-5 -85 C0 -95,0 -95,5 -85 C10 -70,14 -45,14 -15 C14 15,10 45,0 60 Z" fill="url(#coreGlow)" opacity="0.6"/>
+
+    <!-- Chest bright spot -->
+    <ellipse cx="0" cy="-30" rx="8" ry="20" fill="#fef9c3" opacity="0.35"/>
+
+    <!-- === HEAD === -->
+    <!-- Neck taper -->
+    <path d="M-8 -115 C-6 -125,-5 -135,-4 -142 C0 -148,0 -148,4 -142 C5 -135,6 -125,8 -115 Z" fill="url(#headGrad)"/>
+
+    <!-- Head shape -->
+    <ellipse cx="0" cy="-148" rx="10" ry="12" fill="url(#headGrad)"/>
+
+    <!-- Crown/crest feathers -->
+    <path d="M-3 -158 C-8 -175,-5 -185,0 -190 C5 -185,8 -175,3 -158 Z" fill="#fef08a" opacity="0.9"/>
+    <path d="M-6 -155 C-14 -170,-12 -178,-8 -182 C-4 -178,-3 -170,-2 -155 Z" fill="#fbbf24" opacity="0.7"/>
+    <path d="M6 -155 C14 -170,12 -178,8 -182 C4 -178,3 -170,2 -155 Z" fill="#fbbf24" opacity="0.7"/>
+
+    <!-- Beak -->
+    <path d="M0 -148 L10 -152 L0 -140 Z" fill="#fff7ed"/>
+    <path d="M0 -148 L10 -152 L5 -148 Z" fill="#fef9c3"/>
+
+    <!-- Eye -->
+    <circle cx="-2" cy="-150" r="2.5" fill="#0f172a"/>
+    <circle cx="-1.5" cy="-150.5" r="0.8" fill="#fef9c3" opacity="0.7"/>
+
+    <!-- === EMBER PARTICLES === -->
+    <!-- Rising sparks around the phoenix -->
+    <circle cx="-90" cy="60" r="2.5" fill="#fb923c" opacity="0.5"/>
+    <circle cx="-110" cy="10" r="2" fill="#f97316" opacity="0.4"/>
+    <circle cx="-75" cy="-40" r="1.5" fill="#fbbf24" opacity="0.5"/>
+    <circle cx="-140" cy="-30" r="2" fill="#e11d48" opacity="0.35"/>
+    <circle cx="-160" cy="-60" r="1.5" fill="#f97316" opacity="0.3"/>
+
+    <circle cx="90" cy="60" r="2.5" fill="#fb923c" opacity="0.5"/>
+    <circle cx="110" cy="10" r="2" fill="#f97316" opacity="0.4"/>
+    <circle cx="75" cy="-40" r="1.5" fill="#fbbf24" opacity="0.5"/>
+    <circle cx="140" cy="-30" r="2" fill="#e11d48" opacity="0.35"/>
+    <circle cx="160" cy="-60" r="1.5" fill="#f97316" opacity="0.3"/>
+
+    <!-- Data-bit embers (small rounded squares) -->
+    <rect x="-55" y="140" width="4" height="4" rx="1" fill="#fb923c" opacity="0.4"/>
+    <rect x="48" y="150" width="3" height="3" rx="0.8" fill="#f97316" opacity="0.35"/>
+    <rect x="-35" y="175" width="3.5" height="3.5" rx="0.8" fill="#ea580c" opacity="0.3"/>
+    <rect x="30" y="185" width="2.5" height="2.5" rx="0.6" fill="#e11d48" opacity="0.25"/>
+    <rect x="-15" y="200" width="3" height="3" rx="0.7" fill="#be123c" opacity="0.2"/>
+    <rect x="10" y="210" width="2" height="2" rx="0.5" fill="#9f1239" opacity="0.15"/>
+
+    <!-- Upper sparks (rising from wings) -->
+    <circle cx="-50" cy="-110" r="1.5" fill="#fef08a" opacity="0.4"/>
+    <circle cx="55" cy="-105" r="1" fill="#fbbf24" opacity="0.35"/>
+    <circle cx="-30" cy="-130" r="1" fill="#fef9c3" opacity="0.3"/>
+    <circle cx="35" cy="-125" r="1.2" fill="#fef08a" opacity="0.3"/>
+  </g>
+
+  <!-- Top highlight overlay for glassy depth -->
+  <path d="M112 0 L400 0 C462 0,512 50,512 112 L512 180 C480 80,380 30,256 30 C132 30,32 80,0 180 L0 112 C0 50,50 0,112 0 Z" fill="#ffffff" opacity="0.03"/>
+</svg>
