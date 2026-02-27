@@ -30,6 +30,7 @@ jobs:
           - platform: windows-latest
             rust_target: x86_64-pc-windows-msvc
             ffmpeg_os: windows
+            bundles: nsis
 
     runs-on: ${{ matrix.platform }}
 
@@ -178,10 +179,61 @@ jobs:
             fi
           done
 
+      - name: Pre-cache NSIS for Tauri (Windows)
+        if: matrix.ffmpeg_os == 'windows'
+        shell: pwsh
+        run: |
+          $nsisPath = "$env:LOCALAPPDATA\tauri\NSIS"
+          if (Test-Path $nsisPath) {
+            Write-Host "NSIS already cached at $nsisPath"
+          } else {
+            New-Item -ItemType Directory -Force -Path "$env:LOCALAPPDATA\tauri" | Out-Null
+
+            # Download NSIS with retries
+            $nsisUrl = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
+            $zipPath = "$env:RUNNER_TEMP\nsis-3.11.zip"
+            $maxRetries = 5
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                Write-Host "Downloading NSIS (attempt $i/$maxRetries)..."
+                Invoke-WebRequest -Uri $nsisUrl -OutFile $zipPath -MaximumRetryCount 3 -RetryIntervalSec 5
+                break
+              } catch {
+                Write-Host "Attempt $i failed: $_"
+                if ($i -eq $maxRetries) { throw "Failed to download NSIS after $maxRetries attempts" }
+                Start-Sleep -Seconds (10 * $i)
+              }
+            }
+
+            # Extract and rename to expected path
+            Expand-Archive $zipPath -DestinationPath "$env:LOCALAPPDATA\tauri"
+            Rename-Item "$env:LOCALAPPDATA\tauri\nsis-3.11" "NSIS"
+            Remove-Item $zipPath -Force
+
+            # Download NSIS Tauri Utils plugin with retries
+            $pluginUrl = "https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll"
+            $pluginDir = "$nsisPath\Plugins\x86-unicode\additional"
+            New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                Write-Host "Downloading NSIS Tauri Utils plugin (attempt $i/$maxRetries)..."
+                Invoke-WebRequest -Uri $pluginUrl -OutFile "$pluginDir\nsis_tauri_utils.dll" -MaximumRetryCount 3 -RetryIntervalSec 5
+                break
+              } catch {
+                Write-Host "Attempt $i failed: $_"
+                if ($i -eq $maxRetries) { throw "Failed to download NSIS plugin after $maxRetries attempts" }
+                Start-Sleep -Seconds (10 * $i)
+              }
+            }
+
+            Write-Host "NSIS cached successfully at $nsisPath"
+            Get-ChildItem $nsisPath | Select-Object Name
+          }
+
       # ─── Build & Release ────────────────────────────────────
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -192,7 +244,7 @@ jobs:
 
             | Platform | Download |
             |----------|----------|
-            | Windows | `.msi` or `.exe` (NSIS) |
+            | Windows | `.exe` installer |
             | macOS (Apple Silicon) | `.dmg` |
             | macOS (Intel) | `.dmg` |
             | Linux | `.deb` or `.AppImage` |
@@ -207,4 +259,4 @@ jobs:
             - ffmpeg and ffprobe are bundled — no external dependencies required.
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.rust_target }}
+          args: --target ${{ matrix.rust_target }} ${{ matrix.bundles && format('--bundles {0}', matrix.bundles) || '' }}

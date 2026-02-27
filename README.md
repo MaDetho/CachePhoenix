@@ -26,7 +26,7 @@ Download the latest release for your platform from the [Releases](https://github
 
 | Platform | Download |
 |----------|----------|
-| Windows  | `.msi` or `.exe` installer |
+| Windows  | `.exe` installer |
 | macOS    | `.dmg` |
 | Linux    | `.deb` or `.AppImage` |
 
