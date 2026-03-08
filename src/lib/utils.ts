@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { DiscordInfo } from "@/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -103,4 +104,114 @@ export function getFileExtension(fileType: string): string {
 
 export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// ── Discord URL Parser ──────────────────────────────────────────────────────────────
+
+const DISCORD_EPOCH = 1420070400000; // 2015-01-01T00:00:00.000Z in ms
+
+function snowflakeToTimestamp(snowflake: string): number | undefined {
+  try {
+    const id = BigInt(snowflake);
+    const ms = Number(id >> 22n) + DISCORD_EPOCH;
+    // Sanity: Discord launched 2015, reject obviously wrong values
+    const year = new Date(ms).getFullYear();
+    if (year < 2015 || year > 2030) return undefined;
+    return ms;
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseDiscordUrl(url: string): DiscordInfo | null {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    if (host !== 'cdn.discordapp.com' && host !== 'media.discordapp.net') {
+      return null;
+    }
+
+    const isMediaProxy = host === 'media.discordapp.net';
+    const segments = parsed.pathname.split('/').filter(Boolean);
+
+    // Parse signed-URL query params
+    const exHex = parsed.searchParams.get('ex');
+    const isHex = parsed.searchParams.get('is');
+    const expiresAt = exHex ? parseInt(exHex, 16) * 1000 : undefined;
+    const issuedAt = isHex ? parseInt(isHex, 16) * 1000 : undefined;
+
+    // Build clean URL (strip HMAC signature)
+    const cleanParams = new URLSearchParams(parsed.searchParams);
+    cleanParams.delete('hm');
+    const qStr = cleanParams.toString();
+    const cleanUrl = `${parsed.origin}${parsed.pathname}${qStr ? '?' + qStr : ''}`;
+
+    // /attachments/{channel_id}/{attachment_id}/{filename}
+    // /ephemeral-attachments/{channel_id}/{attachment_id}/{filename}
+    if (segments[0] === 'attachments' || segments[0] === 'ephemeral-attachments') {
+      const channelId = segments[1];
+      const attachmentId = segments[2];
+      const filename = segments[3] ? decodeURIComponent(segments[3]) : undefined;
+      return {
+        type: segments[0] === 'ephemeral-attachments' ? 'ephemeral_attachment' : 'attachment',
+        filename,
+        channelId,
+        resourceId: attachmentId,
+        uploadedAt: attachmentId ? snowflakeToTimestamp(attachmentId) : undefined,
+        channelCreatedAt: channelId ? snowflakeToTimestamp(channelId) : undefined,
+        expiresAt,
+        issuedAt,
+        isMediaProxy,
+        cleanUrl,
+      };
+    }
+
+    // /avatars/{user_id}/{hash}.ext
+    if (segments[0] === 'avatars') {
+      const userId = segments[1];
+      return {
+        type: 'avatar',
+        userId,
+        resourceId: userId,
+        uploadedAt: userId ? snowflakeToTimestamp(userId) : undefined,
+        isMediaProxy,
+        cleanUrl,
+      };
+    }
+
+    // /emojis/{emoji_id}.ext
+    if (segments[0] === 'emojis') {
+      const emojiId = segments[1]?.split('.')[0];
+      return {
+        type: 'emoji',
+        resourceId: emojiId,
+        uploadedAt: emojiId ? snowflakeToTimestamp(emojiId) : undefined,
+        isMediaProxy,
+        cleanUrl,
+      };
+    }
+
+    // /stickers/{sticker_id}.ext
+    if (segments[0] === 'stickers') {
+      const stickerId = segments[1]?.split('.')[0];
+      return {
+        type: 'sticker',
+        resourceId: stickerId,
+        uploadedAt: stickerId ? snowflakeToTimestamp(stickerId) : undefined,
+        isMediaProxy,
+        cleanUrl,
+      };
+    }
+
+    // /external/{encoded_path}
+    if (segments[0] === 'external') {
+      return { type: 'external_proxy', isMediaProxy: true, cleanUrl };
+    }
+
+    // Other Discord CDN URL
+    return { type: 'other', isMediaProxy, cleanUrl };
+  } catch {
+    return null;
+  }
 }

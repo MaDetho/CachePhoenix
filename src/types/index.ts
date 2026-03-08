@@ -76,6 +76,28 @@ export interface CacheResource {
   videoInfo?: VideoInfo;
   modifiedAt?: number;
   selected: boolean;
+  /** URL from blockfile index — if set, recovery uses reconstruct_from_index */
+  indexUrl?: string;
+  /** Cache directory path — needed for reconstruct_from_index */
+  cacheDir?: string;
+  /** Content-Type from blockfile index HTTP headers */
+  indexContentType?: string;
+  /** HTTP status line from blockfile index */
+  indexHttpStatus?: string;
+  /** Original filename from Content-Disposition header */
+  indexOriginalFilename?: string;
+  /** Whether the entry uses sparse/range-request storage */
+  indexIsSparse?: boolean;
+  /** Number of sparse children (range-request chunks) */
+  indexChildCount?: number;
+  /** HTTP request timestamp from cache metadata (unix seconds) */
+  indexRequestTime?: number;
+  /** HTTP response timestamp from cache metadata (unix seconds) */
+  indexResponseTime?: number;
+  /** All HTTP response headers as key-value pairs */
+  indexHeaders?: Record<string, string>;
+  /** Parsed Discord-specific metadata from the source URL */
+  discordInfo?: DiscordInfo;
 }
 
 export interface VideoInfo {
@@ -122,3 +144,145 @@ export type ScannerStep = "select" | "scanning" | "results" | "recovery" | "comp
 export type FilterCategory = "all" | "images" | "videos" | "audio" | "other";
 
 export type SortOrder = "newest" | "oldest";
+
+// ── Discord URL Metadata ───────────────────────────────────────────────────
+
+export interface DiscordInfo {
+  /** Type of Discord resource */
+  type: 'attachment' | 'ephemeral_attachment' | 'avatar' | 'emoji' | 'sticker' | 'external_proxy' | 'other';
+  /** Original filename from URL path (decoded) */
+  filename?: string;
+  /** Channel Snowflake ID (for attachments) */
+  channelId?: string;
+  /** Attachment/resource Snowflake ID */
+  resourceId?: string;
+  /** User ID (for avatars) */
+  userId?: string;
+  /** Upload/creation timestamp derived from Snowflake ID (ms since Unix epoch) */
+  uploadedAt?: number;
+  /** Channel creation timestamp from channel Snowflake (ms since Unix epoch) */
+  channelCreatedAt?: number;
+  /** URL expiry timestamp (ms since Unix epoch, from `ex` query param) */
+  expiresAt?: number;
+  /** URL issued timestamp (ms since Unix epoch, from `is` query param) */
+  issuedAt?: number;
+  /** Whether the URL is served through media proxy vs direct CDN */
+  isMediaProxy: boolean;
+  /** The full URL without HMAC signature */
+  cleanUrl?: string;
+}
+
+// ── Blockfile Index Parser Types ─────────────────────────────────────────────
+
+export interface BlockfileDataRef {
+  stream_index: number;
+  file_path: string;
+  offset: number;
+  size: number;
+  is_external: boolean;
+}
+
+export interface BlockfileSparseChild {
+  child_id: number;
+  offset_bytes: number;
+  data_ref: BlockfileDataRef;
+}
+
+export interface BlockfileCacheEntry {
+  url: string;
+  content_type: string | null;
+  content_length: number | null;
+  original_filename: string | null;
+  http_status: string | null;
+  creation_time: number | null;
+  request_time: number | null;
+  response_time: number | null;
+  response_headers: Record<string, string> | null;
+  state: number;
+  flags: number;
+  data_files: BlockfileDataRef[];
+  body_size: number;
+  is_sparse: boolean;
+  children: BlockfileSparseChild[];
+}
+
+export interface BlockfileIndexResult {
+  entries: BlockfileCacheEntry[];
+  entry_count: number;
+  version: number;
+  errors: string[];
+  /** Sparse child-to-parent linking diagnostics */
+  sparse_linking_stats: {
+    total_children_linked: number;
+    orphaned_groups: number;
+    orphaned_children_total: number;
+    unmatched_parents: number;
+    /** Details of orphaned child groups (parent URL → child count) */
+    orphaned_details: Array<{ parent_url: string; child_count: number }>;
+    /** Sparse parents with 0 matched children */
+    unmatched_parent_urls: string[];
+  };
+}
+
+// ── Debug / Metadata Dump Types ──────────────────────────────────────────────
+
+/** Tracks why a chunk was associated with a particular resource during scanning. */
+export interface ChunkAssociationDebug {
+  /** The cache file name (e.g. f_000a1b) */
+  fileName: string;
+  /** Hex number parsed from filename */
+  hexValue: number;
+  /** How this chunk was associated: 'index' | 'etag' | 'content-range' | 'hex-proximity' | 'unclaimed' */
+  method: 'index' | 'etag' | 'content-range' | 'hex-proximity' | 'unclaimed';
+  /** The etag value if used for association */
+  etag?: string;
+  /** The content-range total size if used for association */
+  contentRangeTotal?: number;
+  /** The parent resource's header file name */
+  parentHeaderFile?: string;
+  /** Hex distance from the header file */
+  hexDistance?: number;
+}
+
+/** Full scan debug data returned alongside resources. */
+export interface ScanDebugData {
+  /** Raw blockfile index result (null if no blockfile cache or parse failed) */
+  blockfileIndex: BlockfileIndexResult | null;
+  /** Per-resource chunk association reasoning */
+  chunkAssociations: Record<string, ChunkAssociationDebug[]>;
+  /** Files that were in the index but skipped (with reason and full entry data) */
+  skippedEntries: Array<{
+    url: string;
+    reason: string;
+    contentType?: string;
+    bodySize?: number;
+    fileCount?: number;
+    /** Full index entry data for this skipped entry */
+    entry?: BlockfileCacheEntry;
+  }>;
+  /** Affinity groups built from etag/content-range (before hex fallback) */
+  affinityGroups: Array<{
+    key: string;
+    method: 'etag' | 'content-range-total';
+    fileNames: string[];
+    url?: string;
+  }>;
+  /** Mapping of cache filenames to their index entry's URL and content type */
+  fileToEntryMap: Record<string, { url: string; contentType: string | null; isSparse: boolean; childCount: number }>;
+  /** Files claimed by index-based resource creation */
+  indexClaimedFiles: string[];
+  /** Files claimed by heuristic grouping (hex-proximity, etag, content-range) */
+  heuristicClaimedFiles: string[];
+  /** Summary statistics */
+  stats: {
+    totalFiles: number;
+    blockfileFiles: number;
+    simpleCacheFiles: number;
+    indexEntries: number;
+    indexClaimedFiles: number;
+    heuristicGroupedFiles: number;
+    unclaimedFiles: number;
+    resourcesCreated: number;
+    resourcesWithMetadata: number;
+  };
+}

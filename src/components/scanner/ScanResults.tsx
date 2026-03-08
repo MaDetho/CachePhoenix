@@ -17,9 +17,14 @@ import {
   ArrowDown,
   Clock,
   RotateCcw,
+  Globe,
+  Link,
+  Bug,
 } from 'lucide-react';
 import type { CacheResource, FilterCategory, MediaCategory } from '@/types';
 import { cancelCurrentScan } from '@/lib/scanService';
+import { save } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 function formatDateTime(epochSeconds: number): string {
   const date = new Date(epochSeconds * 1000);
@@ -29,6 +34,18 @@ function formatDateTime(epochSeconds: number): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  });
+}
+
+function formatDateTimeMs(epochMs: number): string {
+  const date = new Date(epochMs);
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   });
 }
 
@@ -243,6 +260,48 @@ export default function ScanResults() {
   const setSortOrder = useAppStore((s) => s.setSortOrder);
   const resetScanner = useAppStore((s) => s.resetScanner);
 
+  const scanDebugData = useAppStore((s) => s.scanDebugData);
+
+  const handleExportDebug = useCallback(async () => {
+    const debugPayload = {
+      exportedAt: new Date().toISOString(),
+      resourceCount: resources.length,
+      resources: resources.map(r => ({
+        id: r.id,
+        displayName: r.displayName,
+        resourceType: r.resourceType,
+        mediaCategory: r.mediaCategory,
+        totalSize: r.totalSize,
+        fileCount: r.files.length,
+        files: r.files,
+        indexUrl: r.indexUrl,
+        indexContentType: r.indexContentType,
+        indexHttpStatus: r.indexHttpStatus,
+        indexHeaders: r.indexHeaders,
+        indexIsSparse: r.indexIsSparse,
+        indexChildCount: r.indexChildCount,
+        indexRequestTime: r.indexRequestTime,
+        indexResponseTime: r.indexResponseTime,
+        indexOriginalFilename: r.indexOriginalFilename,
+        discordInfo: r.discordInfo,
+        videoInfo: r.videoInfo,
+        modifiedAt: r.modifiedAt,
+      })),
+      scanDebugData,
+    };
+
+    try {
+      const filePath = await save({
+        defaultPath: `cachephoenix-debug-${Date.now()}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (filePath) {
+        await invoke('write_file_bytes', { path: filePath, data: Array.from(new TextEncoder().encode(JSON.stringify(debugPayload, null, 2))) });
+      }
+    } catch (err) {
+      console.error('Failed to export debug data:', err);
+    }
+  }, [resources, scanDebugData]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const columns = useColumnCount(scrollContainerRef);
 
@@ -324,6 +383,14 @@ export default function ScanResults() {
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>New Scan</span>
+            </button>
+            <button
+              onClick={handleExportDebug}
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-sm font-medium text-text-muted hover:text-amber-400 hover:bg-amber-400/10 transition-all"
+              title="Export raw scan metadata & chunk association debug data as JSON"
+            >
+              <Bug className="w-3.5 h-3.5" />
+              <span>Debug Export</span>
             </button>
           </div>
 
@@ -520,6 +587,149 @@ export default function ScanResults() {
                   </div>
                 ) : null}
               </div>
+
+              {/* Index Metadata (from Blockfile cache index) */}
+              {(previewResource.indexUrl || previewResource.indexContentType || previewResource.indexHttpStatus || previewResource.indexOriginalFilename || previewResource.indexIsSparse || previewResource.indexHeaders) && (
+                <div className="space-y-3 p-4 rounded-xl border border-phoenix/20 bg-phoenix/5">
+                  <div className="flex items-center space-x-2">
+                    <Globe className="w-4 h-4 text-phoenix" />
+                    <span className="text-xs uppercase tracking-wider font-bold text-phoenix">Cache Index Metadata</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 text-sm">
+                    {previewResource.indexUrl && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Source URL</span>
+                        <span className="font-mono text-xs break-all">{previewResource.indexUrl}</span>
+                      </div>
+                    )}
+                    {previewResource.indexHttpStatus && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">HTTP Status</span>
+                        <span className="font-mono text-xs">{previewResource.indexHttpStatus}</span>
+                      </div>
+                    )}
+                    {previewResource.indexContentType && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Content-Type</span>
+                        <span className="font-mono text-xs">{previewResource.indexContentType}</span>
+                      </div>
+                    )}
+                    {previewResource.indexOriginalFilename && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Original Filename</span>
+                        <span className="font-mono text-xs">{previewResource.indexOriginalFilename}</span>
+                      </div>
+                    )}
+                    {previewResource.indexResponseTime && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Response Time</span>
+                        <span className="font-mono text-xs">{formatDateTime(previewResource.indexResponseTime)}</span>
+                      </div>
+                    )}
+                    {previewResource.indexRequestTime && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Request Time</span>
+                        <span className="font-mono text-xs">{formatDateTime(previewResource.indexRequestTime)}</span>
+                      </div>
+                    )}
+                    {previewResource.indexIsSparse && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Storage</span>
+                        <span className="font-mono text-xs">
+                          Sparse (Range-Request) — {previewResource.indexChildCount ?? 0} chunks
+                        </span>
+                      </div>
+                    )}
+                    {previewResource.indexHeaders && Object.keys(previewResource.indexHeaders).length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Response Headers</span>
+                        <div className="max-h-40 overflow-y-auto rounded-lg border border-surface-2 bg-black/20 p-2 space-y-0.5">
+                          {Object.entries(previewResource.indexHeaders).map(([key, value]) => (
+                            <div key={key} className="font-mono text-xs">
+                              <span className="text-phoenix/70">{key}</span>
+                              <span className="text-text-muted">: </span>
+                              <span className="text-text-primary break-all">{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Discord-specific metadata */}
+              {previewResource.discordInfo && (
+                <div className="space-y-3 p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5">
+                  <div className="flex items-center space-x-2">
+                    <Link className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs uppercase tracking-wider font-bold text-indigo-400">
+                      Discord {previewResource.discordInfo.type === 'attachment' ? 'Attachment'
+                        : previewResource.discordInfo.type === 'ephemeral_attachment' ? 'Ephemeral Attachment'
+                        : previewResource.discordInfo.type === 'avatar' ? 'Avatar'
+                        : previewResource.discordInfo.type === 'emoji' ? 'Custom Emoji'
+                        : previewResource.discordInfo.type === 'sticker' ? 'Sticker'
+                        : previewResource.discordInfo.type === 'external_proxy' ? 'External Media'
+                        : 'Media'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 text-sm">
+                    {previewResource.discordInfo.filename && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Original Filename</span>
+                        <span className="font-mono text-xs break-all">{previewResource.discordInfo.filename}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.uploadedAt != null && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">
+                          {previewResource.discordInfo.type === 'avatar' ? 'Account Created' : 'Uploaded'}
+                        </span>
+                        <span className="font-mono text-xs">{formatDateTimeMs(previewResource.discordInfo.uploadedAt)}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.channelId && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Channel ID</span>
+                        <span className="font-mono text-xs">{previewResource.discordInfo.channelId}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.channelCreatedAt != null && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Channel Created</span>
+                        <span className="font-mono text-xs">{formatDateTimeMs(previewResource.discordInfo.channelCreatedAt)}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.resourceId && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">
+                          {previewResource.discordInfo.type === 'avatar' ? 'User ID' : 'Attachment ID'}
+                        </span>
+                        <span className="font-mono text-xs">{previewResource.discordInfo.resourceId}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.issuedAt != null && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">URL Issued</span>
+                        <span className="font-mono text-xs">{formatDateTimeMs(previewResource.discordInfo.issuedAt)}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.expiresAt != null && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">URL Expires</span>
+                        <span className="font-mono text-xs">{formatDateTimeMs(previewResource.discordInfo.expiresAt)}</span>
+                      </div>
+                    )}
+                    {previewResource.discordInfo.isMediaProxy && (
+                      <div className="space-y-1">
+                        <span className="text-text-muted block text-xs uppercase tracking-wider">Source</span>
+                        <span className="font-mono text-xs">Media Proxy (resized/transcoded)</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
 
               {previewResource.files.length > 0 && (
                 <div className="space-y-2">

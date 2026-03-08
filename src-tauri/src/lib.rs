@@ -2,6 +2,7 @@
 use tauri::State;
 
 mod cache;
+mod blockfile_index;
 
 
 /// Enhanced error message for file read failures.
@@ -504,7 +505,7 @@ fn concat_files(paths: Vec<String>, output: String) -> Result<u64, String> {
 
 /// Find an MP4 box (ftyp, mdat, moov, etc.) in raw data.
 /// Returns (offset_of_box_start, declared_box_size, header_size).
-fn find_mp4_box(data: &[u8], box_type: &[u8; 4]) -> Option<(usize, u64, usize)> {
+pub fn find_mp4_box(data: &[u8], box_type: &[u8; 4]) -> Option<(usize, u64, usize)> {
     let mut pos = 0usize;
     while pos + 8 <= data.len() {
         let box_size = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
@@ -554,12 +555,13 @@ fn find_mp4_box(data: &[u8], box_type: &[u8; 4]) -> Option<(usize, u64, usize)> 
 }
 
 /// Scan raw bytes for valid moov atoms. Returns (offset, size) of the first valid one.
-fn scan_for_moov(data: &[u8]) -> Option<(usize, usize)> {
+pub fn scan_for_moov(data: &[u8]) -> Option<(usize, usize)> {
     let moov_sig: [u8; 4] = [0x6d, 0x6f, 0x6f, 0x76]; // "moov"
     let mvhd_sig: [u8; 4] = [0x6d, 0x76, 0x68, 0x64]; // "mvhd"
     let trak_sig: [u8; 4] = [0x74, 0x72, 0x61, 0x6b]; // "trak"
 
     let mut search_from = 0usize;
+    let mut last_valid: Option<(usize, usize)> = None;
     while search_from < data.len().saturating_sub(4) {
         // Find next occurrence of "moov"
         let idx = match data[search_from..].windows(4).position(|w| w == moov_sig) {
@@ -580,14 +582,17 @@ fn scan_for_moov(data: &[u8]) -> Option<(usize, usize)> {
                     let has_mvhd = inner.windows(4).any(|w| w == mvhd_sig);
                     let has_trak = inner.windows(4).any(|w| w == trak_sig);
                     if has_mvhd && has_trak {
-                        return Some((idx - 4, box_size));
+                        // Keep searching — we want the LAST valid moov, not the first.
+                        // In streamed MP4s the real moov is at the end; earlier matches
+                        // inside raw media data are false positives.
+                        last_valid = Some((idx - 4, box_size));
                     }
                 }
             }
         }
         search_from = idx + 1;
     }
-    None
+    last_valid
 }
 
 /// Extract hex number from a cache filename like "f_00630b"
@@ -598,6 +603,36 @@ fn parse_cache_hex(path: &str) -> Option<u64> {
     } else {
         None
     }
+}
+
+/// Check if a chunk's data starts with a known standalone file signature.
+/// These are complete, unambiguous headers that indicate the chunk is NOT
+/// continuation data for an MP4 but a separate file entirely.
+fn is_standalone_file_header(data: &[u8]) -> bool {
+    if data.len() < 8 {
+        return false;
+    }
+    // EBML / WebM / MKV: 1A 45 DF A3
+    if data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3 {
+        return true;
+    }
+    // PNG: full 8-byte signature 89 50 4E 47 0D 0A 1A 0A
+    if data[0..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
+        return true;
+    }
+    // JPEG with JFIF or EXIF: FF D8 FF E0 or FF D8 FF E1
+    if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF && (data[3] == 0xE0 || data[3] == 0xE1) {
+        return true;
+    }
+    // GIF: 47 49 46 38 (39|37) 61 -- full 6-byte signature
+    if data.len() >= 6
+        && data[0..4] == [0x47, 0x49, 0x46, 0x38]
+        && (data[4] == 0x39 || data[4] == 0x37)
+        && data[5] == 0x61
+    {
+        return true;
+    }
+    false
 }
 
 /// Reconstruct a chunked MP4 from Discord cache files.
@@ -682,15 +717,44 @@ fn reconstruct_chunked_mp4(
         let sz = std::fs::metadata(cp)
             .map_err(|e| format!("Failed to stat {}: {}", cp, e))?
             .len();
-        if sz < full_chunk_size && tail_path.is_none() {
+        if sz < full_chunk_size {
             let chunk_data = read_cache_body(cp)?;
+            // Check if this undersized chunk contains a moov atom (= tail chunk)
             if scan_for_moov(&chunk_data).is_some() {
+                if tail_path.is_none() {
+                    println!(
+                        "[reconstruct] Tail identified (has moov): {} ({} bytes)",
+                        cp, sz
+                    );
+                    tail_path = Some(cp.clone());
+                } else {
+                    println!(
+                        "[reconstruct] Extra moov chunk (already have tail): {} ({} bytes)",
+                        cp, sz
+                    );
+                    middle_paths.push(cp.clone());
+                }
+            } else if is_standalone_file_header(&chunk_data) {
                 println!(
-                    "[reconstruct] Tail identified (has moov): {} ({} bytes)",
-                    cp, sz
+                    "[reconstruct] SKIPPING standalone file in chunk list: {} ({} bytes, starts {:02X} {:02X} {:02X} {:02X})",
+                    std::path::Path::new(cp).file_name().unwrap_or_default().to_string_lossy(),
+                    sz,
+                    chunk_data.get(0).unwrap_or(&0),
+                    chunk_data.get(1).unwrap_or(&0),
+                    chunk_data.get(2).unwrap_or(&0),
+                    chunk_data.get(3).unwrap_or(&0),
                 );
-                tail_path = Some(cp.clone());
+                // Do NOT add to middle_paths — this is a foreign file (WebM, PNG, JPEG, GIF)
             } else {
+                println!(
+                    "[reconstruct] Undersized chunk (no moov): {} ({} bytes, starts {:02X} {:02X} {:02X} {:02X})",
+                    std::path::Path::new(cp).file_name().unwrap_or_default().to_string_lossy(),
+                    sz,
+                    chunk_data.get(0).unwrap_or(&0),
+                    chunk_data.get(1).unwrap_or(&0),
+                    chunk_data.get(2).unwrap_or(&0),
+                    chunk_data.get(3).unwrap_or(&0),
+                );
                 middle_paths.push(cp.clone());
             }
         } else {
@@ -712,6 +776,26 @@ fn reconstruct_chunked_mp4(
         }
     }
 
+    // Sort middle_paths by hex number to ensure correct sequential ordering.
+    // Input order from chunk_paths may not be numerically sorted.
+    middle_paths.sort_by_key(|p| parse_cache_hex(p).unwrap_or(u64::MAX));
+
+    // Log all chunk details for debugging
+    println!("[reconstruct] === Chunk inventory ===");
+    println!("[reconstruct]   Header: {} (hex {:?})", header_path, parse_cache_hex(&header_path));
+    for (i, mp) in middle_paths.iter().enumerate() {
+        let hex = parse_cache_hex(mp);
+        let sz = std::fs::metadata(mp).map(|m| m.len()).unwrap_or(0);
+        println!("[reconstruct]   Middle[{}]: {} (hex {:?}, {} bytes)", i, 
+            std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy(),
+            hex, sz);
+    }
+    if let Some(ref tp) = tail_path {
+        let sz = std::fs::metadata(tp).map(|m| m.len()).unwrap_or(0);
+        println!("[reconstruct]   Tail: {} (hex {:?}, {} bytes)", 
+            std::path::Path::new(tp).file_name().unwrap_or_default().to_string_lossy(),
+            parse_cache_hex(tp), sz);
+    }
     println!(
         "[reconstruct] Files: header=1, middle={}, tail={}",
         middle_paths.len(),
@@ -722,6 +806,19 @@ fn reconstruct_chunked_mp4(
     all_data.extend_from_slice(&header_data);
     for mp in &middle_paths {
         let chunk = read_cache_body(mp)?;
+        // Skip duplicate tail chunks (contain moov) and standalone foreign files.
+        if chunk.len() as u64 != full_chunk_size {
+            if scan_for_moov(&chunk).is_some() {
+                continue; // duplicate tail, already accounted for separately
+            }
+            if is_standalone_file_header(&chunk) {
+                println!(
+                    "[reconstruct] SKIPPING standalone file during assembly: {}",
+                    std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy()
+                );
+                continue;
+            }
+        }
         all_data.extend_from_slice(&chunk);
     }
     if let Some(ref tp) = tail_path {
@@ -755,163 +852,229 @@ fn reconstruct_chunked_mp4(
             );
 
             if moov_at_end {
-                let original_size = ftyp_size as u64 + gap_before_mdat as u64 + mdat_declared_size + moov_size as u64;
-                println!(
-                    "[reconstruct] Original file size: {} bytes ({:.2} MB)",
-                    original_size,
-                    original_size as f64 / 1024.0 / 1024.0
-                );
+                // === Dynamic reconstruction: build the file piece by piece ===
+                // Instead of pre-computing the exact file size (fragile and error-prone),
+                // we build the output dynamically and patch the mdat header at the end.
+                let header_hex = parse_cache_hex(&header_path);
+                let tail_hex = tail_path.as_ref().and_then(|tp| parse_cache_hex(tp));
 
-                let mut reconstructed = vec![0u8; original_size as usize];
-
-                let ftyp_data = &header_data[ftyp_offset..ftyp_offset + ftyp_size];
-                reconstructed[0..ftyp_size].copy_from_slice(ftyp_data);
-
-                // Place mdat header at ftyp_end + gap (preserving any free/skip boxes in between).
-                let mdat_start = ftyp_size + gap_before_mdat;
-                // Copy the gap bytes (e.g. "free" box) from the original header data.
-                if gap_before_mdat > 0 {
-                    let gap_src = &header_data[ftyp_offset + ftyp_size..mdat_offset];
-                    reconstructed[ftyp_size..ftyp_size + gap_before_mdat]
-                        .copy_from_slice(gap_src);
-                }
-                if mdat_header_size == 16 {
-                    reconstructed[mdat_start..mdat_start + 4].copy_from_slice(&1u32.to_be_bytes());
-                    reconstructed[mdat_start + 4..mdat_start + 8].copy_from_slice(b"mdat");
-                    reconstructed[mdat_start + 8..mdat_start + 16]
-                        .copy_from_slice(&mdat_declared_size.to_be_bytes());
-                } else {
-                    reconstructed[mdat_start..mdat_start + 4]
-                        .copy_from_slice(&(mdat_declared_size as u32).to_be_bytes());
-                    reconstructed[mdat_start + 4..mdat_start + 8].copy_from_slice(b"mdat");
-                }
-
-                // Extract media from header_data starting AFTER the mdat box header.
-                let header_media_start = mdat_offset + mdat_header_size;
-                let header_media = &header_data[header_media_start..];
-                let media_start = mdat_start + mdat_header_size;
-                let mut pos = media_start;
-
-                let copy_len = header_media
-                    .len()
-                    .min(reconstructed.len().saturating_sub(pos));
-                reconstructed[pos..pos + copy_len].copy_from_slice(&header_media[..copy_len]);
-                pos += header_media.len();
-
-                // Calculate tail_start so we know the boundary for middle chunk data.
-                // tail_start = where the tail data begins in the final file.
-                let tail_data_for_boundary = if let Some(ref tp) = tail_path {
+                // Read tail data upfront.
+                let tail_data = if let Some(ref tp) = tail_path {
                     Some(read_cache_body(tp)?)
                 } else {
                     None
                 };
-                let tail_start = if let Some(ref td) = tail_data_for_boundary {
-                    original_size as usize - td.len()
+
+                // Start building the output buffer.
+                let mut reconstructed: Vec<u8> = Vec::with_capacity(all_data.len() + 4 * 1024 * 1024);
+
+                // 1. Write ftyp box.
+                let ftyp_data = &header_data[ftyp_offset..ftyp_offset + ftyp_size];
+                reconstructed.extend_from_slice(ftyp_data);
+
+                // 2. Write gap between ftyp and mdat (e.g. uuid/free boxes).
+                if gap_before_mdat > 0 {
+                    let gap_src = &header_data[ftyp_offset + ftyp_size..mdat_offset];
+                    reconstructed.extend_from_slice(gap_src);
+                }
+
+                // 3. Write placeholder mdat header (will be patched later).
+                let mdat_start = reconstructed.len();
+                if mdat_header_size == 16 {
+                    reconstructed.extend_from_slice(&1u32.to_be_bytes()); // size=1 means 64-bit extended
+                    reconstructed.extend_from_slice(b"mdat");
+                    reconstructed.extend_from_slice(&0u64.to_be_bytes()); // placeholder, patched later
                 } else {
-                    reconstructed.len()
-                };
+                    reconstructed.extend_from_slice(&0u32.to_be_bytes()); // placeholder, patched later
+                    reconstructed.extend_from_slice(b"mdat");
+                }
 
-                // Calculate how much middle media data we actually need.
-                let middle_data_budget = tail_start.saturating_sub(pos);
-                println!(
-                    "[reconstruct] Middle data budget: {} bytes (tail_start: {}, current pos: {})",
-                    middle_data_budget, tail_start, pos
-                );
+                // 4. Write header media data (everything after mdat header in the header file).
+                let header_media_start = mdat_offset + mdat_header_size;
+                let header_media = &header_data[header_media_start..];
+                reconstructed.extend_from_slice(header_media);
 
-                // For gap detection: track the hex number of the last actually-written
-                // chunk (or the baseline for the first chunk).
-                // The baseline is header_hex + 1 to account for the tail file which
-                // typically sits at header_hex + 1 in the sequence.
-                let header_hex = parse_cache_hex(&header_path);
-                let tail_hex = tail_path.as_ref().and_then(|tp| parse_cache_hex(tp));
-                // Baseline: the highest of header_hex and tail_hex (they're usually adjacent).
-                let mut last_written_hex: Option<u64> = match (header_hex, tail_hex) {
-                    (Some(h), Some(t)) => Some(h.max(t)),
-                    (Some(h), None) => Some(h),
-                    (None, Some(t)) => Some(t),
-                    (None, None) => None,
-                };
+                // 5. Write middle chunks with gap detection.
+                let mut last_written_hex: Option<u64> = header_hex;
                 let mut skipped_non_standard = 0usize;
-                for (_idx, mp) in middle_paths.iter().enumerate() {
-                    // Stop if we've already filled up to the tail boundary.
-                    if pos >= tail_start {
-                        println!(
-                            "[reconstruct] Reached tail_start boundary at pos={}, stopping middle chunks (processed {}/{})",
-                            pos, _idx, middle_paths.len()
-                        );
-                        break;
-                    }
-
+                let mut written_middle = 0usize;
+                for mp in &middle_paths {
                     let chunk = read_cache_body(mp)?;
 
-                    // Filter: skip chunks that are NOT full_chunk_size.
-                    // Non-standard-sized files in the hex range are almost certainly from
-                    // other cached content (different downloads, images, etc.).
+                    // Filter: skip duplicate tail chunks (contain moov).
+                    // Do NOT filter by magic bytes — raw video data has no signature.
                     if chunk.len() as u64 != full_chunk_size {
-                        skipped_non_standard += 1;
+                        if scan_for_moov(&chunk).is_some() {
+                            skipped_non_standard += 1;
+                            println!(
+                                "[reconstruct] Skipping duplicate tail chunk {} ({} bytes, contains moov)",
+                                std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy(),
+                                chunk.len(),
+                            );
+                            continue;
+                        }
                         println!(
-                            "[reconstruct] Skipping non-standard chunk {} ({} bytes, expected {})",
+                            "[reconstruct] Writing undersized chunk {} ({} bytes, starts {:02X} {:02X} {:02X} {:02X})",
                             std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy(),
                             chunk.len(),
-                            full_chunk_size
+                            chunk.get(0).unwrap_or(&0),
+                            chunk.get(1).unwrap_or(&0),
+                            chunk.get(2).unwrap_or(&0),
+                            chunk.get(3).unwrap_or(&0),
                         );
-                        continue;
                     }
 
-                    // Gap detection: compare against last_written_hex (NOT middle_paths[idx-1],
-                    // which may have been a skipped non-standard chunk).
+                    // Gap detection: insert zero padding for truly missing hex slots.
                     if let (Some(prev_num), Some(curr_num)) =
                         (last_written_hex, parse_cache_hex(mp))
                     {
-                        let gap = curr_num.saturating_sub(prev_num).saturating_sub(1);
+                        let mut gap = curr_num.saturating_sub(prev_num).saturating_sub(1);
+                        // Tail hex occupies a slot but is placed at the end.
+                        if let Some(th) = tail_hex {
+                            if th > prev_num && th < curr_num {
+                                gap = gap.saturating_sub(1);
+                            }
+                        }
                         if gap > 0 {
                             let gap_size = (gap * full_chunk_size) as usize;
-                            // Cap gap padding so it doesn't exceed tail_start.
-                            let capped_gap = gap_size.min(tail_start.saturating_sub(pos));
                             println!(
-                                "[reconstruct] Gap: {} missing chunk(s) before {} ({} bytes padding, capped to {})",
+                                "[reconstruct] Gap: {} missing chunk(s) before {} ({} bytes zero-fill)",
                                 gap,
-                            std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy(),
+                                std::path::Path::new(mp).file_name().unwrap_or_default().to_string_lossy(),
                                 gap_size,
-                                capped_gap
                             );
-                            pos += capped_gap;
+                            reconstructed.resize(reconstructed.len() + gap_size, 0u8);
                         }
                     }
 
-                    // Update last_written_hex to this chunk's hex number.
+                    // Update hex tracking.
                     if let Some(num) = parse_cache_hex(mp) {
                         last_written_hex = Some(num);
                     }
 
-                    // Don't write past tail_start.
-                    if pos >= tail_start {
-                        break;
-                    }
-                    let write_len = chunk.len().min(tail_start - pos);
-                    reconstructed[pos..pos + write_len].copy_from_slice(&chunk[..write_len]);
-                    pos += chunk.len();
+                    // Write the chunk data.
+                    reconstructed.extend_from_slice(&chunk);
+                    written_middle += 1;
                 }
 
-                if skipped_non_standard > 0 {
+                println!(
+                    "[reconstruct] Written {} middle chunks, skipped {}",
+                    written_middle, skipped_non_standard
+                );
+
+                // 6. Write tail data — but split out the moov atom.
+                // The tail chunk contains video data followed by the moov atom.
+                // Video data goes INSIDE mdat; moov goes AFTER mdat as a separate top-level box.
+                let mut tail_moov_data: Option<Vec<u8>> = None;
+                if let Some(ref td) = tail_data {
+                    // Find moov in the tail data
+                    if let Some((moov_off, moov_sz)) = scan_for_moov(td) {
+                        // Everything before moov = video data (inside mdat)
+                        let tail_video = &td[..moov_off];
+                        // The moov atom itself = separate top-level box (after mdat)
+                        let tail_moov = &td[moov_off..moov_off + moov_sz];
+                        println!(
+                            "[reconstruct] Tail split: {} bytes video + {} bytes moov (at offset {})",
+                            tail_video.len(), tail_moov.len(), moov_off
+                        );
+                        if !tail_video.is_empty() {
+                            reconstructed.extend_from_slice(tail_video);
+                        }
+                        tail_moov_data = Some(tail_moov.to_vec());
+                    } else {
+                        // No moov found in tail — write it all as video data
+                        println!(
+                            "[reconstruct] Tail has no moov — writing all {} bytes as video data",
+                            td.len()
+                        );
+                        reconstructed.extend_from_slice(td);
+                    }
+                }
+
+                // 6b. Reconcile mdat size with actual assembled data.
+                // For mp4_header_only files, the mdat declares the FULL original size
+                // (e.g., 47MB) so padding to that size preserves moov stco/co64 offsets.
+                // For mp4_complete files (or mdat with size=0), the declared size only
+                // covers the first ~1MB — truncating would discard most of the video.
+                // In that case, expand mdat to cover all assembled data; the tail moov
+                // (if present) or ffmpeg remux will provide correct sample tables.
+                let target_mdat_end = mdat_start + mdat_declared_size as usize;
+                let actual_mdat_size = (reconstructed.len() - mdat_start) as u64;
+                let final_mdat_size;
+
+                if reconstructed.len() < target_mdat_end {
+                    // Assembled data is smaller than declared mdat — zero-pad to preserve
+                    // moov offsets. Missing chunks become black/silent frames.
+                    let pad = target_mdat_end - reconstructed.len();
                     println!(
-                        "[reconstruct] Skipped {} non-standard-sized chunks",
-                        skipped_non_standard
+                        "[reconstruct] Padding mdat with {} zero bytes to match original declared size ({} bytes) for moov offset validity",
+                        pad, mdat_declared_size
+                    );
+                    reconstructed.resize(target_mdat_end, 0u8);
+                    final_mdat_size = mdat_declared_size;
+                } else if actual_mdat_size > mdat_declared_size * 2 {
+                    // Assembled data FAR exceeds the declared mdat size.
+                    // This happens when the header is an mp4_complete file whose mdat
+                    // only declares ~1MB, but the real video spans many chunks.
+                    // Do NOT truncate — expand mdat to cover all assembled data.
+                    // The tail chunk's moov (if found) references the full data,
+                    // and ffmpeg remux will rebuild sample tables correctly.
+                    final_mdat_size = actual_mdat_size;
+                    println!(
+                        "[reconstruct] Expanding mdat: assembled {} bytes >> declared {} bytes — using actual size (header was likely mp4_complete or mdat size=0)",
+                        actual_mdat_size, mdat_declared_size
+                    );
+                } else if reconstructed.len() > target_mdat_end {
+                    // Small overflow — likely rounding or alignment. Truncate to declared size.
+                    println!(
+                        "[reconstruct] Reconstructed mdat ({} bytes) slightly exceeds original declared size ({} bytes) — truncating",
+                        actual_mdat_size, mdat_declared_size
+                    );
+                    reconstructed.truncate(target_mdat_end);
+                    final_mdat_size = mdat_declared_size;
+                } else {
+                    // Exact match
+                    final_mdat_size = mdat_declared_size;
+                }
+
+                // 7. Patch the mdat header with the final size.
+                if mdat_header_size == 16 {
+                    reconstructed[mdat_start + 8..mdat_start + 16]
+                        .copy_from_slice(&final_mdat_size.to_be_bytes());
+                } else {
+                    // 32-bit mdat header — cap at u32::MAX to prevent silent overflow.
+                    // In practice, browser cache videos never approach 4GB.
+                    let capped_size = if final_mdat_size > u32::MAX as u64 {
+                        println!(
+                            "[reconstruct] WARNING: final_mdat_size {} exceeds u32::MAX, capping to {} for 32-bit mdat header",
+                            final_mdat_size, u32::MAX
+                        );
+                        u32::MAX
+                    } else {
+                        final_mdat_size as u32
+                    };
+                    reconstructed[mdat_start..mdat_start + 4]
+                        .copy_from_slice(&capped_size.to_be_bytes());
+                }
+
+                // 8. Append moov atom AFTER mdat as a separate top-level box.
+                if let Some(ref moov_data) = tail_moov_data {
+                    let moov_offset_in_file = reconstructed.len();
+                    reconstructed.extend_from_slice(moov_data);
+                    println!(
+                        "[reconstruct] Moov placed at file offset {} ({} bytes)",
+                        moov_offset_in_file, moov_data.len()
                     );
                 }
 
-                if let Some(ref td) = tail_data_for_boundary {
-                    println!(
-                        "[reconstruct] Tail placement: offset {} ({} bytes)",
-                        tail_start,
-                        td.len()
-                    );
-                    if tail_start < reconstructed.len() {
-                        let copy_len = td.len().min(reconstructed.len() - tail_start);
-                        reconstructed[tail_start..tail_start + copy_len]
-                            .copy_from_slice(&td[..copy_len]);
-                    }
-                }
+                let moov_total = tail_moov_data.as_ref().map(|d| d.len()).unwrap_or(0);
+                println!(
+                    "[reconstruct] Final file size: {} bytes ({:.2} MB), mdat_box={} bytes, moov={} bytes",
+                    reconstructed.len(),
+                    reconstructed.len() as f64 / 1024.0 / 1024.0,
+                    final_mdat_size,
+                    moov_total,
+                );
 
                 // Moov is already correctly placed by the tail chunk above.
                 // Do NOT overwrite from all_data — all_data is a gap-less concatenation
@@ -1636,6 +1799,8 @@ pub fn run() {
             get_app_binary_path,
             diagnose_file_read,
             fix_sidecar_permissions,
+            blockfile_index::parse_blockfile_index,
+            blockfile_index::reconstruct_from_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

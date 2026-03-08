@@ -166,21 +166,40 @@ export async function recoverResources(
           await generateThumbnail(outputPath, thumbPath);
         }
       } else if (resource.resourceType === "mp4_chunked") {
-        addLog(`Reconstructing chunked MP4: ${resource.displayName} (${resource.files.length} chunks)...`);
         onProgress({
           current: i + 1, total,
           currentFile: resource.displayName,
           phase: "reconstructing",
           log: [...log], errors: [...errors],
         });
-        const headerPath = resource.files[0].path;
-        const chunkPaths = resource.files.slice(1).map((f) => f.path);
-        const totalBytes: number = await invoke("reconstruct_chunked_mp4", {
-          headerPath,
-          chunkPaths,
-          output: outputPath,
-        });
-        addLog(`  Raw reconstruction: ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
+
+        if (resource.indexUrl && resource.cacheDir) {
+          // Index-based reconstruction — works for both sparse (multi-child) and
+          // non-sparse (single-file) entries.  reconstruct_from_index reads the
+          // blockfile index and concatenates children in child_id order, which
+          // is the correct byte-stream order for sparse/range-request downloads.
+          const label = resource.indexIsSparse
+            ? `Reconstructing from index (sparse, ${resource.indexChildCount ?? '?'} children)`
+            : `Reconstructing from index (single file)`;
+          addLog(`${label}: ${resource.displayName}...`);
+          const totalBytes: number = await invoke("reconstruct_from_index", {
+            dir: resource.cacheDir,
+            url: resource.indexUrl,
+            output: outputPath,
+          });
+          addLog(`  Index reconstruction: ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
+        } else {
+          // Legacy heuristic reconstruction — no index data available
+          addLog(`Reconstructing chunked MP4: ${resource.displayName} (${resource.files.length} chunks)...`);
+          const headerPath = resource.files[0].path;
+          const chunkPaths = resource.files.slice(1).map((f) => f.path);
+          const totalBytes: number = await invoke("reconstruct_chunked_mp4", {
+            headerPath,
+            chunkPaths,
+            output: outputPath,
+          });
+          addLog(`  Raw reconstruction: ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
+        }
 
         // Remux (stream-copy) reconstructed MP4 through ffmpeg to fix container structure.
         // IMPORTANT: use remux (-c copy) NOT re-encode for chunked files.

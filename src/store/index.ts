@@ -7,6 +7,7 @@ import type {
   FilterCategory,
   RecoveryOptions,
   RecoveryProgress,
+  ScanDebugData,
   ScannerStep,
   SortOrder,
 } from "@/types";
@@ -59,6 +60,9 @@ interface AppStore {
   setIsScanning: (scanning: boolean) => void;
   isRecovering: boolean;
   setIsRecovering: (recovering: boolean) => void;
+
+  scanDebugData: ScanDebugData | null;
+  setScanDebugData: (data: ScanDebugData | null) => void;
 
   resetScanner: () => void;
 }
@@ -152,6 +156,8 @@ export const useAppStore = create<AppStore>((set) => ({
   setIsScanning: (scanning) => set({ isScanning: scanning }),
   isRecovering: false,
   setIsRecovering: (recovering) => set({ isRecovering: recovering }),
+  scanDebugData: null,
+  setScanDebugData: (data) => set({ scanDebugData: data }),
 
   resetScanner: () => set({
     scannerStep: "select" as ScannerStep,
@@ -164,5 +170,6 @@ export const useAppStore = create<AppStore>((set) => ({
     filterCategory: "all" as FilterCategory,
     searchQuery: "",
     previewResource: null,
+    scanDebugData: null,
   }),
 }));

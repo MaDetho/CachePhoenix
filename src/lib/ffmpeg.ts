@@ -150,6 +150,8 @@ export async function generateThumbnail(
   const result = await runSidecar("ffmpeg", [
     "-y",
     "-fflags", "+genpts+discardcorrupt",
+    "-analyzeduration", "100M",
+    "-probesize", "100M",
     "-err_detect", "ignore_err",
     "-ss", timestamp,
     "-i", videoPath,
